@@ -60,6 +60,7 @@
   "Performs a fetch of all muses in the queue"
   ([context] (fetch! context default-bucket-id))
   ([context bucket-id]
+   (log :info "fetch! " bucket-id)
    (fetch-bucket! context bucket-id)))
 
 (defn fetch-all! [context]
@@ -72,6 +73,7 @@
    The muses in the queue will all be fetched together when a trigger condition is met."
   ([context muse] (enqueue! context default-bucket-id muse))
   ([context bucket-id muse]
+   (log :info "enqueue! " bucket-id muse)
    (let [p (prom/deferred)
          delivering-muse (u/map (fn [result]
                                   (prom/resolve! p result)
@@ -116,6 +118,7 @@
                            bucket)))))
 
 (defn update-trigger! [context bucket-id trigger-kind opts-fn]
+  (log :info "update-trigger! : " bucket-id)
   (update-bucket! context bucket-id (fn [bucket]
                                       (update-in bucket [:triggers trigger-kind] opts-fn))))
 
