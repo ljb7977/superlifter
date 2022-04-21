@@ -8,7 +8,13 @@
   ([f p]
    (if (prom/promise? p)
      (prom/then p f)
-     (prom/resolved (f p)))))
+     (prom/resolved (f p))))
+  ([then catch p]
+   (if (prom/promise? p)
+     (-> p
+         (prom/then then)
+         (prom/catch catch))
+     (prom/resolved (then p)))))
 
 #?(:clj (defmacro def-fetcher [sym bindings do-fetch-fn]
           `(defrecord ~sym ~bindings

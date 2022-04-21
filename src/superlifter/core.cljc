@@ -57,7 +57,7 @@
                ;      (zipmap promises result))))
             (prom/catch
              (fn [ex]
-               (doall (map prom/reject! promises ex))))))
+               (doall (map prom/reject! promises (repeat ex)))))))
                ;(run! (fn [p] (prom/reject! p ex))
                ;      promises)))))
       (do (log :debug "Nothing ready to fetch for" bucket-id)
