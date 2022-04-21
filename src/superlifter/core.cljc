@@ -38,9 +38,12 @@
                        (fn [buckets]
                          (update buckets bucket-id (comp f clear-ready))))
                 (get bucket-id))]
-    (if-let [muses (not-empty (get-in new [:queue :ready]))]
-      (let [cache (get-in new [:urania-opts :cache])]
-        (log :info "Fetching" (count muses) "muses from bucket" bucket-id)
+    (if-let [muses-and-promises (not-empty (get-in new [:queue :ready]))]
+      (let [cache (get-in new [:urania-opts :cache])
+
+            muses    (map :muse    muses-and-promises)
+            promises (map :promise muses-and-promises)]
+        (log :info "Fetching" (count muses-and-promises) "muses from bucket" bucket-id)
         (-> (u/execute! (u/collect muses)
                         (merge (:urania-opts new)
                                (when cache
@@ -49,7 +52,13 @@
              (fn [[result new-cache-value]]
                (when cache
                  (urania-> cache new-cache-value))
-               result))))
+
+               (run! (fn [[p result]] (prom/resolve! p result))
+                     (zipmap promises result))))
+            (prom/catch
+             (fn [ex]
+               (run! (fn [p] (prom/reject! p ex))
+                     promises)))))
       (do (log :debug "Nothing ready to fetch for" bucket-id)
           (prom/resolved nil)))))
 
@@ -72,37 +81,34 @@
    The muses in the queue will all be fetched together when a trigger condition is met."
   ([context muse] (enqueue! context default-bucket-id muse))
   ([context bucket-id muse]
-   (let [p (prom/deferred)
-         delivering-muse (u/map (fn [result]
-                                  (prom/resolve! p result)
-                                  result)
-                                muse)]
+   (let [promise (prom/deferred)]
      (log :debug "Enqueuing muse into" bucket-id (:id muse))
      (update-bucket! context
                      bucket-id
                      (fn [bucket]
                        (reduce (fn [b trigger-fn]
                                  (trigger-fn b))
-                               (update-in bucket [:queue :waiting] conj delivering-muse)
+                               (update-in bucket [:queue :waiting] conj {:muse    muse
+                                                                         :promise promise})
                                (keep :enqueue-fn (vals (:triggers bucket))))))
-     p)))
+     promise)))
 
 (defn- fetch-all-handling-errors! [context bucket-id]
   (try (prom/catch (fetch-bucket! context bucket-id)
-           (fn [error]
-             (log :warn "Fetch failed" error)))
+                   (fn [error]
+                     (log :warn "Fetch failed" error)))
        (catch Throwable t
          (log :warn "Fetch failed" t))))
 
 (defmulti start-trigger! (fn [kind _context _bucket-id _opts] kind))
 
 (defmethod start-trigger! :queue-size [_ _context _bucket-id {:keys [threshold] :as opts}]
-  (assoc opts :enqueue-fn (fn [{:keys [queue] :as bucket}]
-                            (if (= threshold (count (:waiting queue)))
-                              (-> bucket
-                                  (assoc-in [:queue :ready] (take threshold (:waiting queue)))
-                                  (update-in [:queue :waiting] #(drop threshold %)))
-                              bucket))))
+           (assoc opts :enqueue-fn (fn [{:keys [queue] :as bucket}]
+                                     (if (= threshold (count (:waiting queue)))
+                                       (-> bucket
+                                           (assoc-in [:queue :ready] (take threshold (:waiting queue)))
+                                           (update-in [:queue :waiting] #(drop threshold %)))
+                                       bucket))))
 
 (defmethod start-trigger! :elastic [kind  _context _bucket-id opts]
   (assoc opts
