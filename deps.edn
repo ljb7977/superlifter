@@ -1,7 +1,9 @@
-{:paths   ["src"]
- :deps    {funcool/urania  {:mvn/version "0.2.0"}
-           funcool/promesa {:mvn/version "5.1.0"}
-           org.clojure/tools.logging {:mvn/version "0.6.0"}}
+{:paths ["src"]
+ :deps  {funcool/urania  {:mvn/version "0.2.0"}
+         ;funcool/urania            {:git/url "https://github.com/funcool/urania.git"
+         ;                           :sha     "a5a7daa7fb2fbc0c5014182572807b68ac360bf9"}
+         funcool/promesa           {:mvn/version "5.1.0"}
+         org.clojure/tools.logging {:mvn/version "0.6.0"}}
 
  :mvn/repos
  {"central" {:url "https://repo1.maven.org/maven2/"}
