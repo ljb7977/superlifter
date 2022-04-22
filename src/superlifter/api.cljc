@@ -5,16 +5,13 @@
 
 (defn unwrap
   ([p] (unwrap identity p))
-  ([f p]
-   (if (prom/promise? p)
-     (prom/then p f)
-     (prom/resolved (f p))))
-  ([then catch p]
+  ([f p] (unwrap f identity p))
+  ([then-f catch-f p]
    (if (prom/promise? p)
      (-> p
-         (prom/then then)
-         (prom/catch catch))
-     (prom/resolved (then p)))))
+         (prom/then then-f)
+         (prom/catch catch-f))
+     (prom/resolved (then-f p)))))
 
 #?(:clj (defmacro def-fetcher [sym bindings do-fetch-fn]
           `(defrecord ~sym ~bindings
