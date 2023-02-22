@@ -5,7 +5,8 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[funcool/urania "0.2.0"]
                  [funcool/promesa "5.1.0"]
-                 [org.clojure/tools.logging "0.6.0"]]
+                 [org.clojure/tools.logging "0.6.0"]
+                 [dev.weavejester/medley "1.5.0"]]
   :profiles {:provided {:dependencies [[org.clojure/clojure "1.10.1"]
                                        [org.clojure/clojurescript "1.10.597"]]}
              :test     {:dependencies [[com.walmartlabs/lacinia-pedestal "0.14.0-alpha-2"]]}

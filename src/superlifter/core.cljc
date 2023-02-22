@@ -1,6 +1,7 @@
 (ns superlifter.core
   (:require [urania.core :as u]
             [promesa.core :as prom]
+            [medley.core :refer [map-kv-vals]]
             #?(:clj [superlifter.logging :refer [log]]
                :cljs [superlifter.logging :refer-macros [log]]))
   (:refer-clojure :exclude [resolve]))
@@ -29,27 +30,30 @@
                           (-> (assoc queue :waiting [])
                               (assoc :ready (:waiting queue))))))
 
-(defn- update-bucket! [context bucket-id f]
-  (let [bucket-id (if (contains? @(:buckets context) bucket-id)
-                    bucket-id
-                    (do (log :warn "Bucket" bucket-id "does not exist, using default bucket")
-                        default-bucket-id))
-        new (-> (swap! (:buckets context)
-                       (fn [buckets]
-                         (update buckets bucket-id (comp f clear-ready))))
-                (get bucket-id))]
-    (if-let [muses (not-empty (get-in new [:queue :ready]))]
-      (let [cache (get-in new [:urania-opts :cache])]
+(defn- update-bucket!
+  "context: {:buckets (atom {:a {:trigger {:elastic ...
+                                     :interval ...}}}}
+  update bucket with bucket-id, applying f
+  after updating bucket, if there are any ready muses, fetch them from data source"
+  [context bucket-id f]
+  (let [bucket-id  (if (contains? @(:buckets context) bucket-id)
+                     bucket-id
+                     (do (log :warn "Bucket" bucket-id "does not exist, using default bucket")
+                         default-bucket-id))
+        new-bucket (-> (:buckets context)
+                       (swap! #(update % bucket-id (comp f clear-ready)))
+                       (get bucket-id))]
+    (if-let [muses (not-empty (get-in new-bucket [:queue :ready]))]  ;; if there are any ready muses, get that
+      (let [cache (get-in new-bucket [:urania-opts :cache])]
         (log :info "Fetching" (count muses) "muses from bucket" bucket-id)
-        (-> (u/execute! (u/collect muses)
-                        (merge (:urania-opts new)
+        (-> (u/execute! (u/collect muses)  ;; 여러 데이터 소스에서 가져올 데이터를 하나로 뭉침
+                        (merge (:urania-opts new-bucket)
                                (when cache
                                  {:cache (->urania cache)})))
-            (prom/then
-             (fn [[result new-cache-value]]
-               (when cache
-                 (urania-> cache new-cache-value))
-               result))))
+            (prom/then (fn [[result new-cache-value]]
+                         (when cache
+                           (urania-> cache new-cache-value))  ;; data caching
+                         result)))) ;; urania가 fetch해온 데이터 리턴
       (do (log :debug "Nothing ready to fetch for" bucket-id)
           (prom/resolved nil)))))
 
@@ -76,15 +80,15 @@
          delivering-muse (u/map (fn [result]
                                   (prom/resolve! p result)
                                   result)
-                                muse)]
+                                muse)] ;; muse의 data fetching이 완료된 다음에 프로미스가 resolve되게 됨
      (log :debug "Enqueuing muse into" bucket-id (:id muse))
      (update-bucket! context
                      bucket-id
                      (fn [bucket]
-                       (reduce (fn [b trigger-fn]
-                                 (trigger-fn b))
-                               (update-in bucket [:queue :waiting] conj delivering-muse)
-                               (keep :enqueue-fn (vals (:triggers bucket))))))
+                       (let [enqueue-fns (->> bucket :triggers vals (keep :enqueue-fn))  ;; get all enqueue-fns in the bucket
+                             bucket' (update-in bucket [:queue :waiting] conj delivering-muse)] ;; bucket의 waiting list에 delivering-muse 추가
+                         ;; 버킷에 모든 enqueue function을 적용한다
+                         (reduce (fn [b trigger-fn] (trigger-fn b)) bucket' enqueue-fns))))
      p)))
 
 (defn- fetch-all-handling-errors! [context bucket-id]
@@ -177,26 +181,32 @@
 (defmethod start-trigger! :default [_context _bucket-id _trigger-kind opts]
   opts)
 
-(defn- start-triggers! [context bucket-id {:keys [triggers] :as opts}]
-  (update opts :triggers
-          #(do (log :debug "Starting" (count triggers) "triggers for bucket" bucket-id)
-               (reduce-kv (fn [ts trigger-kind trigger-opts]
-                            (log :debug "Starting trigger" trigger-kind "for bucket" bucket-id trigger-opts)
-                            (assoc ts trigger-kind (start-trigger! trigger-kind context bucket-id trigger-opts)))
-                          {}
-                          %))))
+(defn start-triggers!
+  "map of triggers -> new map of started triggers
+  triggers: {:elastic {:threshold 0}
+             :interval {:interval 100}}
 
-(defn- start-bucket! [context bucket-id opts]
+  Output: {:elastic {:threshold 0
+                     :enqueue-fn <some-function>}
+           :interval {:interval 100
+                      :stop-fn <some-function>}}
+  "
+  [triggers context bucket-id]
+  (log :debug "Starting" (count triggers) "triggers for bucket" bucket-id)
+  (map-kv-vals (fn [trigger-kind trigger-opts]
+                 (log :debug "Starting trigger" trigger-kind "for bucket" bucket-id trigger-opts)
+                 (start-trigger! trigger-kind context bucket-id trigger-opts))
+               triggers))
+
+(defn- start-bucket! [{:keys [urania-opts] :as context} bucket-id opts]
   (log :debug "Starting bucket" bucket-id)
-  (start-triggers! context bucket-id (-> (assoc opts :queue {:ready [] :waiting []} :id bucket-id)
-                                         (update :urania-opts #(merge (:urania-opts context) %)))))
+  (-> opts
+      (assoc :queue {:ready [] :waiting []} :id bucket-id)
+      (update :urania-opts #(merge urania-opts %))
+      (update :triggers start-triggers! context bucket-id)))
 
 (defn- start-buckets! [{:keys [buckets] :as context}]
-  (swap! buckets
-         #(reduce-kv (fn [buckets id _opts]
-                       (update buckets id (partial start-bucket! context id)))
-                     %
-                     %))
+  (swap! buckets #(map-kv-vals (fn [bucket-id opts] (start-bucket! context bucket-id opts)) %))
   context)
 
 (defn- stop-bucket! [context bucket-id]

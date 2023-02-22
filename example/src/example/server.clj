@@ -6,6 +6,7 @@
             [superlifter.lacinia :refer [inject-superlifter with-superlifter]]
             [superlifter.api :as s]
             [promesa.core :as prom]
+            [urania.core :as u]
             [clojure.tools.logging :as log]))
 
 (def pet-db (atom {"abc-123" {:name "Lyra"
@@ -43,6 +44,54 @@
                      (resolve/with-context result {::pet-id (:id args)}))))))
 
 (defn- resolve-pet-details [context _args {:keys [id]}]
+  (with-superlifter context
+    (s/enqueue! :pet-details (->FetchPet id))))
+
+
+(defn fetch-pet-details [db ids]
+  [])
+
+
+(defprotocol DataLoad
+  (load [this context]))
+(defmacro def-superfetcher-v2 [sym bucket-id bulk-fetcher]
+  (let [do-fetch-fn (fn [many {:keys [db]}]
+                      (let [ids (map :id many)
+                            data (->> (bulk-fetcher db ids)
+                                      (group-by :id))]
+                        (map data ids)))]
+    `(defrecord ~sym [id]  ;; 항상 argument는 id여야 함.
+       u/DataSource
+       (-identity [this#] (:id this#))
+       (-fetch [this# env#]
+         (unwrap first (~do-fetch-fn [this#] env#)))
+
+       u/BatchedSource
+       (-fetch-multi [muse# muses# env#]
+         (let [muses# (cons muse# muses#)]
+           (unwrap (fn [responses#]
+                     (zipmap (map u/-identity muses#)
+                             responses#))
+                   (~do-fetch-fn muses# env#))))
+
+       DataLoad
+       (load [this# context#]
+         (with-superlifter context#
+           (s/enqueue! ~bucket-id this#))))))
+
+
+;; Dataloader 선언과 비슷하게! bulk로 가져와서 id별로 다시 분배하는 로직은 최대한 밖에 안 보이게 하자
+(def-superfetcher-v2 SomeSuperFetcher :pet-details fetch-pet-details)
+;; 만약 아래와 같은 형태로 쓸 수 있다면 어떨까?
+(defn resolve-pet-details-2
+  [{:keys [db] :as ctx} arg {:keys [id]}]
+  (-> (->SomeSuperFetcher id)
+      (load ctx);; 이러면 해당 petDetail 하나만 딱 잘 나와야 한다
+      (p/then ...)))
+
+:=>
+(defn resolve-pet-details-expanded
+  [context args {:keys [id]}]
   (with-superlifter context
     (s/enqueue! :pet-details (->FetchPet id))))
 
