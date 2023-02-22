@@ -2,7 +2,7 @@
  :deps  {funcool/urania            {:git/url "https://github.com/green-labs/urania.git"
                                     :sha     "097afe6b7889baf8eff2ddc34937b61f36adc48c"}
          ; urania 0.2.0의 다음 버전이 릴리즈되면 그 버전으로 업데이트 필요
-         funcool/promesa           {:mvn/version "5.1.0"}
+         funcool/promesa           {:mvn/version "10.0.594"}
          org.clojure/tools.logging {:mvn/version "0.6.0"}}
 
  :mvn/repos

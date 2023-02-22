@@ -127,13 +127,15 @@
                                       (update-in bucket [:triggers trigger-kind] opts-fn))))
 
 (defmethod start-trigger! :interval [_ context bucket-id opts]
-  (let [watcher #?(:clj (future (loop []
-                                  (Thread/sleep (:interval opts))
-                                  (fetch-all-handling-errors! context bucket-id)
-                                  (recur)))
+  ;(log :info "starting interval trigger: " bucket-id)
+  (let [watcher #?(:clj (prom/create (fn [resolve reject]
+                                       (loop []
+                                         (Thread/sleep (:interval opts))
+                                         (fetch-all-handling-errors! context bucket-id)
+                                         (recur))))
                    :cljs (js/setInterval #(fetch-all-handling-errors! context bucket-id)
                                          (:interval opts)))]
-    (assoc opts :stop-fn #?(:clj #(future-cancel watcher)
+    (assoc opts :stop-fn #?(:clj #(prom/resolve! watcher)
                             :cljs #(js/clearInterval watcher)))))
 
 #?(:cljs
@@ -194,7 +196,7 @@
                           %))))
 
 (defn- start-bucket! [context bucket-id opts]
-  (log :debug "Starting bucket" bucket-id)
+  (log :info "Starting bucket" bucket-id)
   (start-triggers! context bucket-id (-> (assoc opts :queue {:ready [] :waiting []} :id bucket-id)
                                          (update :urania-opts #(merge (:urania-opts context) %)))))
 
@@ -207,6 +209,7 @@
   context)
 
 (defn- stop-bucket! [context bucket-id]
+  (log :info "Stopping bucket" bucket-id)
   (doseq [{:keys [stop-fn]} (vals (:triggers (get @(:buckets context) bucket-id)))
           :when stop-fn]
     (stop-fn)))
