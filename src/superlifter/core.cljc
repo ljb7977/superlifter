@@ -132,7 +132,8 @@
                                        (loop []
                                          (Thread/sleep (:interval opts))
                                          (fetch-all-handling-errors! context bucket-id)
-                                         (recur))))
+                                         (recur)))
+                                     :vthread)
                    :cljs (js/setInterval #(fetch-all-handling-errors! context bucket-id)
                                          (:interval opts)))]
     (assoc opts :stop-fn #?(:clj #(prom/resolve! watcher)
