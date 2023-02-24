@@ -127,14 +127,17 @@
                                       (update-in bucket [:triggers trigger-kind] opts-fn))))
 
 (defmethod start-trigger! :interval [_ context bucket-id opts]
-  (let [watcher #?(:clj (future (loop []
-                                  (Thread/sleep (:interval opts))
-                                  (fetch-all-handling-errors! context bucket-id)
-                                  (recur)))
-                   :cljs (js/setInterval #(fetch-all-handling-errors! context bucket-id)
-                                         (:interval opts)))]
-    (assoc opts :stop-fn #?(:clj #(future-cancel watcher)
-                            :cljs #(js/clearInterval watcher)))))
+  (if (:started? opts)
+    opts
+    (let [watcher #?(:clj (future (loop []
+                                    (Thread/sleep (:interval opts))
+                                    (fetch-all-handling-errors! context bucket-id)
+                                    (recur)))
+                     :cljs (js/setInterval #(fetch-all-handling-errors! context bucket-id)
+                                           (:interval opts)))]
+      (assoc opts :stop-fn #?(:clj #(future-cancel watcher)
+                              :cljs #(js/clearInterval watcher))
+                  :started? true))))
 
 #?(:cljs
    (defn- check-debounced [context bucket-id interval last-updated]
@@ -153,33 +156,36 @@
          (js/setTimeout check-debounced (- interval (- (js/Date.) lu)) context bucket-id interval last-updated)))))
 
 (defmethod start-trigger! :debounced [_ context bucket-id opts]
-  (let [interval (:interval opts)
-        last-updated (atom nil)
-        watcher #?(:clj (future (loop []
-                                  (let [lu @last-updated]
-                                    (cond
-                                      (nil? lu) (do (Thread/sleep interval)
-                                                    (recur))
+  (if (:started? opts)
+    opts
+    (let [interval (:interval opts)
+          last-updated (atom nil)
+          watcher #?(:clj (future (loop []
+                                    (let [lu @last-updated]
+                                      (cond
+                                        (nil? lu) (do (Thread/sleep interval)
+                                                      (recur))
 
-                                      (= :exit lu) nil
+                                        (= :exit lu) nil
 
-                                      (<= interval (- (System/currentTimeMillis) lu))
-                                      (do (fetch-all-handling-errors! context bucket-id)
-                                          (compare-and-set! last-updated lu nil)
-                                          (recur))
+                                        (<= interval (- (System/currentTimeMillis) lu))
+                                        (do (fetch-all-handling-errors! context bucket-id)
+                                            (compare-and-set! last-updated lu nil)
+                                            (recur))
 
-                                      :else
-                                      (do (Thread/sleep (- interval (- (System/currentTimeMillis) lu)))
-                                          (recur))))))
-                   :cljs (js/setTimeout check-debounced 0 context bucket-id interval last-updated))]
-    (assoc opts
-           :enqueue-fn (fn [bucket]
-                         (reset! last-updated #?(:clj (System/currentTimeMillis)
-                                                 :cljs (js/Date.)))
-                         bucket)
-           :stop-fn #(do #?(:clj (future-cancel watcher)
-                            :cljs (js/clearInterval watcher))
-                         (reset! last-updated :exit)))))
+                                        :else
+                                        (do (Thread/sleep (- interval (- (System/currentTimeMillis) lu)))
+                                            (recur))))))
+                     :cljs (js/setTimeout check-debounced 0 context bucket-id interval last-updated))]
+      (assoc opts
+             :enqueue-fn (fn [bucket]
+                           (reset! last-updated #?(:clj (System/currentTimeMillis)
+                                                   :cljs (js/Date.)))
+                           bucket)
+             :stop-fn #(do #?(:clj (future-cancel watcher)
+                              :cljs (js/clearInterval watcher))
+                           (reset! last-updated :exit))
+             :started? true))))
 
 (defmethod start-trigger! :default [_context _bucket-id _trigger-kind opts]
   opts)
