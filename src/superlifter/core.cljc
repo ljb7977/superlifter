@@ -136,11 +136,10 @@
                            (let [watcher (future (loop []
                                                    (Thread/sleep (:interval opts))
                                                    (fetch-all-handling-errors! context bucket-id)
-                                                   ;; 이 함수가 context의 bucket을 수정할 수 있음. 따라서 start-buckets!의 swap!이 여러 번 불리는 것을 일으킴
                                                    (recur)))]
-                             ;; returns stop-fn
+                             ;; return a function to stop the watcher
                              (fn []
-                               (swap! stop-count inc)
+                               (swap! stop-count inc)  ;; to check the thread stop count
                                (future-cancel watcher))))
                     :cljs (fn [context]
                             (let [watcher
@@ -148,11 +147,7 @@
                                                   (:interval opts))]
                               #(js/clearInterval watcher))))]
     (-> opts
-        (assoc :start-fn start-fn)
-        #_(assoc :stop-fn #?(:clj #(do
-                                     (swap! stop-count inc)
-                                     (future-cancel watcher))
-                             :cljs #(js/clearInterval watcher))))))
+        (assoc :start-fn start-fn))))
 
 #?(:cljs
    (defn- check-debounced [context bucket-id interval last-updated]
@@ -170,37 +165,43 @@
          :else
          (js/setTimeout check-debounced (- interval (- (js/Date.) lu)) context bucket-id interval last-updated)))))
 
-#_(defmethod start-trigger! :debounced [_ context bucket-id opts]
-    (if (:started? opts)
-      opts
-      (let [interval (:interval opts)
-            last-updated (atom nil)
-            watcher #?(:clj (future (loop []
-                                      (let [lu @last-updated]
-                                        (cond
-                                          (nil? lu) (do (Thread/sleep interval)
-                                                        (recur))
+(defmethod start-trigger! :debounced [_ bucket-id opts]
+  (let [interval (:interval opts)
+        last-updated (atom nil)
+        start-fn #?(:clj (fn [context]
+                           (swap! start-count inc)
+                           (let [watcher (future (loop []
+                                                   (let [lu @last-updated]
+                                                     (cond
+                                                       (nil? lu) (do (Thread/sleep interval)
+                                                                     (recur))
 
-                                          (= :exit lu) nil
+                                                       (= :exit lu) nil
 
-                                          (<= interval (- (System/currentTimeMillis) lu))
-                                          (do (fetch-all-handling-errors! context bucket-id)
-                                              (compare-and-set! last-updated lu nil)
-                                              (recur))
+                                                       (<= interval (- (System/currentTimeMillis) lu))
+                                                       (do (fetch-all-handling-errors! context bucket-id)
+                                                           (compare-and-set! last-updated lu nil)
+                                                           (recur))
 
-                                          :else
-                                          (do (Thread/sleep (- interval (- (System/currentTimeMillis) lu)))
-                                              (recur))))))
-                       :cljs (js/setTimeout check-debounced 0 context bucket-id interval last-updated))]
-        (assoc opts
-               :enqueue-fn (fn [bucket]
-                             (reset! last-updated #?(:clj (System/currentTimeMillis)
-                                                     :cljs (js/Date.)))
-                             bucket)
-               :stop-fn #(do #?(:clj (future-cancel watcher)  ;; TODO: 변경
-                                :cljs (js/clearInterval watcher))
-                             (reset! last-updated :exit))
-               :started? true))))
+                                                       :else
+                                                       (do (Thread/sleep (- interval (- (System/currentTimeMillis) lu)))
+                                                           (recur))))))]
+                             ;; return a function to stop the watcher
+                             (fn []
+                               (swap! stop-count inc)
+                               (future-cancel watcher)
+                               (reset! last-updated :exit))))
+                    :cljs (fn [context]
+                            (let [watcher (js/setTimeout check-debounced 0 context bucket-id interval last-updated)]
+                              (fn []
+                                  (js/clearInterval watcher)
+                                  (reset! last-updated :exit)))))]
+    (assoc opts
+           :enqueue-fn (fn [bucket]
+                         (reset! last-updated #?(:clj (System/currentTimeMillis)
+                                                 :cljs (js/Date.)))
+                         bucket)
+           :start-fn start-fn)))
 
 (defmethod start-trigger! :default [_trigger-kind _bucket-id opts]
   opts)
@@ -223,21 +224,15 @@
     (start-triggers! bucket-id bucket-opts)))
 
 (defn- start-buckets! [{:keys [buckets urania-opts] :as context}]
-  #_(let [buckets (medley/map-kv-vals (fn [bucket-id bucket-opts]
-                                        (start-bucket! bucket-id bucket-opts urania-opts))
-                                      buckets)]
-      (assoc context :buckets buckets))
   (swap! buckets
          (fn [buckets]
-           (println "swap! bucket")
            (medley/map-kv-vals (fn [bucket-id bucket-opts]
                                  (start-bucket! bucket-id bucket-opts urania-opts))
                                buckets)))
   context)
 
 (defn- stop-bucket! [context bucket-id]
-  (doseq [{:keys [stop-fn]} (vals (:triggers (get @(:buckets context) bucket-id)))
-          :when stop-fn]
+  (doseq [stop-fn (vals (get-in context [:stop-fns bucket-id]))]
     (stop-fn)))
 
 (defn add-bucket! [context bucket-id opts]
@@ -302,21 +297,16 @@
         stop-fns (->> (for [[bucket-id bucket] @(:buckets context)]
                         [bucket-id (->> (for [[trigger-kind trigger] (:triggers bucket)
                                               :when (#{:interval :debounced} trigger-kind)]
-                                          [trigger-kind ((:start-fn trigger) context)]  ;; stop function
-                                          ,)
-                                        (into {}))])
-                      (into {}))]
-    (assoc context :stop-fns stop-fns)))
+                                          [trigger-kind ((:start-fn trigger) context)])  ;; [trigger-kind -> stop-fn]
+                                        (into {}))]) ;; {trigger-kind -> stop-fn}
+                      (into {})) ;; {bucket-id -> {trigger-kind -> stop-fn} }
+        context (assoc context :stop-fns stop-fns)]
+    context))
 
 (defn stop!
   "Stops superlifter"
   [context]
-  (let [stop-fns (->> (:stop-fns context)
-                      vals
-                      (mapcat vals))]
-    (doseq [stop-fn stop-fns]
-      (stop-fn)))
-  ;(run! (partial stop-bucket! context) (keys @(:buckets context)))
+  (run! (partial stop-bucket! context) (-> context :stop-fns keys))
   (println "start count: " @start-count)
   (println "stop count: " @stop-count)
   context)
