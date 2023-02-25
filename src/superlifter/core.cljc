@@ -132,14 +132,14 @@
 
 (defmethod start-trigger! :interval [_ bucket-id opts]
   (let [start-fn #?(:clj (fn [context]
-                           (swap! start-count inc)
+                           (swap! start-count inc)  ;; TODO: 테스트 후에 삭제 예정
                            (let [watcher (future (loop []
                                                    (Thread/sleep (:interval opts))
                                                    (fetch-all-handling-errors! context bucket-id)
                                                    (recur)))]
                              ;; return a function to stop the watcher
                              (fn []
-                               (swap! stop-count inc)  ;; to check the thread stop count
+                               (swap! stop-count inc)  ;; TODO: 테스트 후에 삭제 예정
                                (future-cancel watcher))))
                     :cljs (fn [context]
                             (let [watcher
@@ -169,7 +169,7 @@
   (let [interval (:interval opts)
         last-updated (atom nil)
         start-fn #?(:clj (fn [context]
-                           (swap! start-count inc)
+                           (swap! start-count inc)  ;; TODO: 테스트 후에 삭제 예정
                            (let [watcher (future (loop []
                                                    (let [lu @last-updated]
                                                      (cond
@@ -188,7 +188,7 @@
                                                            (recur))))))]
                              ;; return a function to stop the watcher
                              (fn []
-                               (swap! stop-count inc)
+                               (swap! stop-count inc)  ;; TODO: 테스트 후에 삭제 예정
                                (future-cancel watcher)
                                (reset! last-updated :exit))))
                     :cljs (fn [context]
