@@ -54,13 +54,9 @@
                (when cache
                  (urania-> cache new-cache-value))
                (doall (map prom/resolve! promises result))))
-               ;(run! (fn [[p result]] (prom/resolve! p result))
-               ;      (zipmap promises result))))
             (prom/catch
              (fn [ex]
                (doall (map prom/reject! promises (repeat ex)))))))
-               ;(run! (fn [p] (prom/reject! p ex))
-               ;      promises)))))
       (do (log :debug "Nothing ready to fetch for" bucket-id)
           (prom/resolved nil)))))
 
