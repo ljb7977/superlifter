@@ -242,6 +242,18 @@
 (defn default-opts []
   {:urania-opts {:cache (atom {})}})
 
+(defn start-trigger-watchers!
+  "Calls start-fn for each trigger, traversing all triggers in the buckets atom
+  Returns context map with stop-fns associated, which is a map stores functions to stop watcher threads for each trigger."
+  [context]
+  (let [stop-fns (->> (for [[bucket-id bucket] @(:buckets context)]
+                        [bucket-id (->> (for [[trigger-kind trigger] (:triggers bucket)
+                                              :when (#{:interval :debounced} trigger-kind)]
+                                          [trigger-kind ((:start-fn trigger) context)])  ;; [trigger-kind -> stop-fn]
+                                        (into {}))]) ;; {trigger-kind -> stop-fn}
+                      (into {}))]
+    (assoc context :stop-fns stop-fns)))
+
 (defn start!
   "Starts a superlifter with the supplied options, which can contain:
 
@@ -287,15 +299,8 @@
   (let [context (-> (merge (default-opts) opts)
                     (update-in [:buckets default-bucket-id] #(or % {}))
                     (update :buckets atom)
-                    (start-buckets!))
-        stop-fns (->> (for [[bucket-id bucket] @(:buckets context)]
-                        [bucket-id (->> (for [[trigger-kind trigger] (:triggers bucket)
-                                              :when (#{:interval :debounced} trigger-kind)]
-                                          [trigger-kind ((:start-fn trigger) context)])  ;; [trigger-kind -> stop-fn]
-                                        (into {}))]) ;; {trigger-kind -> stop-fn}
-                      (into {})) ;; {bucket-id -> {trigger-kind -> stop-fn} }
-        context (assoc context :stop-fns stop-fns)]
-    context))
+                    (start-buckets!))]
+    (start-trigger-watchers! context)))
 
 (defn stop!
   "Stops superlifter"
