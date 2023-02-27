@@ -296,11 +296,11 @@
   Returns a context which can be used to stop superlifter, enqueue muses and trigger fetches.
   "
   [opts]
-  (let [context (-> (merge (default-opts) opts)
-                    (update-in [:buckets default-bucket-id] #(or % {}))
-                    (update :buckets atom)
-                    (start-buckets!))]
-    (start-trigger-watchers! context)))
+  (-> (merge (default-opts) opts)
+      (update-in [:buckets default-bucket-id] #(or % {}))
+      (update :buckets atom)
+      (start-buckets!)
+      (start-trigger-watchers!)))
 
 (defn stop!
   "Stops superlifter"
