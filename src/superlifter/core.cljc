@@ -133,7 +133,6 @@
                                                    (Thread/sleep (:interval opts))
                                                    (fetch-all-handling-errors! context bucket-id)
                                                    (recur)))]
-
                              ;; return a function to stop the watcher
                              #(future-cancel watcher)))
                     :cljs (fn [context]
@@ -243,8 +242,8 @@
   {:urania-opts {:cache (atom {})}})
 
 (defn start-trigger-watchers!
-  "Calls start-fn for each trigger, traversing all triggers in the buckets atom
-  Returns context map with stop-fns associated, which is a map stores functions to stop watcher threads for each trigger."
+  "Calls start-fn for each trigger if exists, traversing all triggers in the buckets atom.
+  Returns new context with :stop-fns associated, which is a map storing functions to stop watcher threads of those triggers."
   [context]
   (let [stop-fns (->> (for [[bucket-id bucket] @(:buckets context)]
                         [bucket-id (->> (for [[trigger-kind trigger] (:triggers bucket)
