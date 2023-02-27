@@ -127,20 +127,15 @@
   (update-bucket! context bucket-id (fn [bucket]
                                       (update-in bucket [:triggers trigger-kind] opts-fn))))
 
-(def start-count (atom 0))
-(def stop-count (atom 0))
-
 (defmethod start-trigger! :interval [_ bucket-id opts]
   (let [start-fn #?(:clj (fn [context]
-                           (swap! start-count inc)  ;; TODO: 테스트 후에 삭제 예정
                            (let [watcher (future (loop []
                                                    (Thread/sleep (:interval opts))
                                                    (fetch-all-handling-errors! context bucket-id)
                                                    (recur)))]
+
                              ;; return a function to stop the watcher
-                             (fn []
-                               (swap! stop-count inc)  ;; TODO: 테스트 후에 삭제 예정
-                               (future-cancel watcher))))
+                             #(future-cancel watcher)))
                     :cljs (fn [context]
                             (let [watcher
                                   (js/setInterval #(fetch-all-handling-errors! context bucket-id)
@@ -169,7 +164,6 @@
   (let [interval (:interval opts)
         last-updated (atom nil)
         start-fn #?(:clj (fn [context]
-                           (swap! start-count inc)  ;; TODO: 테스트 후에 삭제 예정
                            (let [watcher (future (loop []
                                                    (let [lu @last-updated]
                                                      (cond
@@ -186,9 +180,9 @@
                                                        :else
                                                        (do (Thread/sleep (- interval (- (System/currentTimeMillis) lu)))
                                                            (recur))))))]
+
                              ;; return a function to stop the watcher
                              (fn []
-                               (swap! stop-count inc)  ;; TODO: 테스트 후에 삭제 예정
                                (future-cancel watcher)
                                (reset! last-updated :exit))))
                     :cljs (fn [context]
@@ -307,19 +301,4 @@
   "Stops superlifter"
   [context]
   (run! (partial stop-bucket! context) (-> context :stop-fns keys))
-  (println "start count: " @start-count)
-  (println "stop count: " @stop-count)
   context)
-
-(comment
-  (require '[sinsunhi.middleware :refer [superlifter-args]])
-  (require '[integrant.repl.state :as state])
-  (let [db (:db/mysql state/system)
-        s (superlifter-args {:db db})]
-    (tap> (start! s)))
-  (def stop-fns @user/p)
-  (let [fns (->> stop-fns
-                 vals
-                 (mapcat vals))]
-    (doseq [f fns]
-      (f))))
